@@ -9,18 +9,21 @@ import java.util.Optional;
 public interface NotificacaoProjetoUsuarioRepository extends JpaRepository<NotificacaoProjetoUsuario, Long> {
 
     List<NotificacaoProjetoUsuario>
-    findByProjetoUsuarioProjetoIdAndProjetoUsuarioUsuarioEmailOrderByNotificacaoCriadoEmDesc(
+    findByNotificacaoTarefaProjetoIdAndUsuarioEmailOrderByNotificacaoCriadoEmDesc(
             Long projetoId,
             String emailUsuario
     );
 
-    Long countByProjetoUsuarioProjetoIdAndProjetoUsuarioUsuarioEmailAndLidaFalse(
+
+
+
+    Long countByNotificacaoTarefaProjetoIdAndUsuarioEmailAndLidaFalse(
             Long projetoId,
             String emailUsuario
     );
 
     Optional<NotificacaoProjetoUsuario>
-    findByIdAndProjetoUsuarioProjetoIdAndProjetoUsuarioUsuarioEmail(
+    findByIdAndNotificacaoTarefaProjetoIdAndUsuarioEmail(
             Long id,
             Long projetoId,
             String emailUsuario

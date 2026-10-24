@@ -6,7 +6,7 @@ import lombok.Getter;
 
 
 public enum CargoProjeto {
-    GERENTE ("Gerente", false),
+    GERENTE ("Gerente", true),
     SCRUMMASTER ("Scrum Master", true),
     DESENVOLVEDOR ("Desenvolvedor", true),
     QA ("QA", true),

@@ -12,8 +12,10 @@ public enum PermissoesUsuarioProjeto {
     EDITARESTRUTURA("Editar Estrutura"),
     GERENCIARSPRINTS("Gerenciar Sprints"),
     ADICIONARMEMBROS("Adicionar Membros"),
-    REMOVERMEMBROS("Remover Membros"),
-    VISUALIZARPROJETO("Visualizar Projeto"); 
+    // apenas gerentes podem remover
+//    REMOVERMEMBROS("Remover Membros"),
+    ATUALIZARPERMISSOES("Atualizar Permissoes"),
+    VISUALIZARPROJETO("Visualizar Projeto");
 
     private final String nome;
 

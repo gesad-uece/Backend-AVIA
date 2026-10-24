@@ -7,6 +7,10 @@ import br.com.avia.avia_api.enums.CargoProjeto;
 import br.com.avia.avia_api.enums.PapelProjeto;
 import br.com.avia.avia_api.enums.PermissoesUsuarioProjeto;
 import br.com.avia.avia_api.exception.permissao.PermissaoNegadaException;
+import br.com.avia.avia_api.exception.projeto.CargoException;
+import br.com.avia.avia_api.exception.projeto.ProjetoNaoEncontradoException;
+import br.com.avia.avia_api.exception.projeto.UltimoGerenteException;
+import br.com.avia.avia_api.exception.projeto.UsuarioException;
 import br.com.avia.avia_api.repository.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -68,11 +72,11 @@ public class ProjetoService {
                 .anyMatch(p -> p.getId().equals(projetoId));
 
         if (!temAcesso) {
-            throw new RuntimeException("Projeto não encontrado ou você não tem permissão para visualizá-lo.");
+            throw new ProjetoNaoEncontradoException("Projeto não encontrado ou você não tem permissão para visualizá-lo.");
         }
 
         Projeto projeto = projetoRepository.findById(projetoId)
-                .orElseThrow(() -> new RuntimeException("Projeto não encontrado."));
+                .orElseThrow(() -> new ProjetoNaoEncontradoException("Projeto não encontrado."));
 
         return converterParaDTO(projeto);
     }
@@ -106,34 +110,23 @@ public class ProjetoService {
 
     @Transactional
     public MembroResponseDTO atualizarMembroDoProjeto(Long projetoId, Long usuarioAlvoId,
-            AtualizarMembroRequestDTO dto, String emailSolicitante) {
+                                                      AtualizarMembroRequestDTO dto, String emailSolicitante) {
+        projetoRepository.buscarComLock(projetoId)
+                .orElseThrow(ProjetoNaoEncontradoException::new);
+
         Usuario solicitante = buscarUsuarioPorEmail(emailSolicitante);
-        verificarPermissao(projetoId, solicitante.getId(), "ADICIONARMEMBROS");
+        // fazer 404 e esconder informações, falar apenas que algo não foi encontrado
+        projetoUsuarioRepository.findByProjetoIdAndUsuarioId(projetoId, solicitante.getId())
+                .orElseThrow(() -> new UsuarioException("Membro não encontrado no projeto."));
+        ProjetoUsuario usuarioAlvo = projetoUsuarioRepository.findByProjetoIdAndUsuarioId(projetoId, usuarioAlvoId)
+                .orElseThrow(() -> new UsuarioException("Membro não encontrado no projeto."));
 
-        ProjetoUsuario pu = projetoUsuarioRepository.findByProjetoIdAndUsuarioId(projetoId, usuarioAlvoId)
-                .orElseThrow(() -> new RuntimeException("Membro não encontrado no projeto."));
+        verificarPermissao(projetoId, solicitante.getId(), PermissoesUsuarioProjeto.ATUALIZARPERMISSOES);
 
-        if (dto.cargo() != null) {
-            if (!dto.cargo().isAtribuivel()) {
-                throw new RuntimeException("Este cargo não pode ser atribuído manualmente.");
-            }
-            pu.setCargo(dto.cargo());
-        }
+        atribuirCargoEPapel(projetoId, dto, usuarioAlvo);
 
-        if (dto.papel() != null) {
-            if (!dto.papel().isAtribuivel()) {
-                throw new RuntimeException("Este papel não pode ser atribuído manualmente.");
-            }
-            Papel novoPapel = papelRepository.findByNome(dto.papel().name())
-                    .orElseThrow(() -> new RuntimeException("Papel inexistente."));
-            List<Permissao> novasPermissoes = new ArrayList<>(novoPapel.getPermissoes());
-            pu.setPapel(novoPapel);
-            pu.getPermissoes().clear();
-            pu.getPermissoes().addAll(novasPermissoes);
-        }
-
-        projetoUsuarioRepository.save(pu);
-        return converterMembroParaDTO(pu);
+        projetoUsuarioRepository.save(usuarioAlvo);
+        return converterMembroParaDTO(usuarioAlvo);
     }
 
     @Transactional
@@ -149,13 +142,13 @@ public class ProjetoService {
 
     @Transactional
     public ProjetoResponseDTO editarInformacoesDoProjeto(Long projetoId, AtualizarProjetoRequestDTO dto,
-            String emailUsuario) {
+                                                         String emailUsuario) {
         Usuario usuarioLogado = buscarUsuarioPorEmail(emailUsuario);
 
         validarPermissaoGerente(projetoId, usuarioLogado.getId());
 
         Projeto projeto = projetoRepository.findById(projetoId)
-                .orElseThrow(() -> new RuntimeException("Projeto não encontrado."));
+                .orElseThrow(() -> new ProjetoNaoEncontradoException("Projeto não encontrado."));
 
         if (dto.nome() != null && !dto.nome().isBlank()) {
             projeto.setNome(dto.nome());
@@ -169,7 +162,7 @@ public class ProjetoService {
     public void adicionarMembroAoProjeto(Long projetoId, AdicionarMembroProjetoRequestDTO dto, String emailMembro) {
         Usuario membro = buscarUsuarioPorEmail(emailMembro);
 
-        verificarPermissao(projetoId, membro.getId(), "ADICIONARMEMBROS");
+        verificarPermissao(projetoId, membro.getId(), PermissoesUsuarioProjeto.ADICIONARMEMBROS);
 
         if (!dto.cargo().isAtribuivel()) {
             throw new RuntimeException("Este cargo não pode ser atribuído manualmente.");
@@ -177,11 +170,12 @@ public class ProjetoService {
         if (!dto.papel().isAtribuivel()) {
             throw new RuntimeException("Este papel não pode ser atribuído manualmente.");
         }
+        validarCargoEPapel(dto.cargo(), dto.papel().name());
 
         Usuario novoMembro = buscarUsuarioPorEmail(dto.emailUsuario());
 
         Projeto projeto = projetoRepository.findById(projetoId)
-                .orElseThrow(() -> new RuntimeException("Projeto não encontrado."));
+                .orElseThrow(() -> new ProjetoNaoEncontradoException("Projeto não encontrado."));
 
         boolean jaEhMembro = projetoUsuarioRepository.existsByProjetoIdAndUsuarioId(projetoId, novoMembro.getId());
         if (jaEhMembro) {
@@ -198,41 +192,46 @@ public class ProjetoService {
         pu.setPermissoes(permissoesDoNovoMembro);
         projetoUsuarioRepository.save(pu);
 
-        notificacaoService.notificarUsuarioAdicionadoAoProjeto(pu);
+        notificacaoService.notificarUsuarioAdicionadoAoProjeto(novoMembro, projetoId);
     }
 
     @Transactional
-    public String removerMembroDoProjeto(Long projetoId, RemoverMembroRequestDTO dto, String emailMembro) {
-        Usuario membroSolicitante = buscarUsuarioPorEmail(emailMembro);
+    public String removerMembroDoProjeto(Long projetoId, RemoverMembroRequestDTO dto, String emailSolicitante) {
+        projetoRepository.buscarComLock(projetoId)
+                .orElseThrow(ProjetoNaoEncontradoException::new);
 
-        verificarPermissao(projetoId, membroSolicitante.getId(), "REMOVERMEMBROS");
+        Usuario membroSolicitante = buscarUsuarioPorEmail(emailSolicitante);
+        ProjetoUsuario usuarioSolicitante = projetoUsuarioRepository.
+                findByProjetoIdAndUsuarioId(projetoId, membroSolicitante.getId())
+                .orElseThrow(() -> new UsuarioException("Usuario não encontrado"));
 
-        Usuario membro = buscarUsuarioPorEmail(dto.emailMembro());
+        Usuario membroAlvo = buscarUsuarioPorEmail(dto.emailMembro());
+        ProjetoUsuario projetoUsuarioAlvo = projetoUsuarioRepository.findByProjetoIdAndUsuarioId(projetoId, membroAlvo.getId())
+                .orElseThrow(() -> new UsuarioException("Usuário não está no projeto."));
 
-        projetoRepository.findById(projetoId)
-                .orElseThrow(() -> new RuntimeException("Projeto não encontrado."));
+        verificarGerente(projetoId, usuarioSolicitante);
+        if (projetoUsuarioAlvo.getCargo() == CargoProjeto.GERENTE)
+            verificarQuantidadeDeGerentes(projetoId);
 
-        ProjetoUsuario pu = projetoUsuarioRepository.findByProjetoIdAndUsuarioId(projetoId, membro.getId())
-                .orElseThrow(() -> new RuntimeException("Usuário não está no projeto."));
+        projetoUsuarioRepository.delete(projetoUsuarioAlvo);
 
-        boolean ehMembro = projetoUsuarioRepository.existsByProjetoIdAndUsuarioId(projetoId, membro.getId());
-        if (!ehMembro) {
-            throw new RuntimeException("Este usuário não é membro do projeto.");
-        }
-
-        projetoUsuarioRepository.delete(pu);
-
-        return membro.getNome();
+        return membroAlvo.getNome();
     }
 
     @Transactional
     public void editarPermissoesMembro(Long projetoId, Long usuarioId, PermissoesMembroRequestDTO dto,
-            String emailGerente) {
+                                       String emailGerente) {
         Usuario gerente = buscarUsuarioPorEmail(emailGerente);
+        // so gerentes podem atualizar permissoes, portanto uma permissao atribuida nao pode ser a permissao de ATUALIZARPERMISSOES
         validarPermissaoGerente(projetoId, gerente.getId());
 
         ProjetoUsuario pu = projetoUsuarioRepository.findByUsuarioIdAndProjetoId(usuarioId, projetoId)
-                .orElseThrow(() -> new RuntimeException("Usuário não está no projeto."));
+                .orElseThrow(() -> new UsuarioException("Usuário não está no projeto."));
+
+        if(dto.permissoes().stream().anyMatch(p -> p == PermissoesUsuarioProjeto.ATUALIZARPERMISSOES || p == PermissoesUsuarioProjeto.ADICIONARMEMBROS)){
+            // talvez especificar qual permissao nao é aceita?
+            throw new PermissaoNegadaException();
+        }
 
         List<Permissao> novasPermissoes = new ArrayList<>();
 
@@ -249,11 +248,11 @@ public class ProjetoService {
     }
 
     public List<PermissoesUsuarioProjeto> visualizarPermissoesMembro(Long projetoId, Long usuarioId,
-            String emailMembro) {
+                                                                     String emailMembro) {
         buscarUsuarioPorEmail(emailMembro);
 
         ProjetoUsuario pu = projetoUsuarioRepository.findByUsuarioIdAndProjetoId(usuarioId, projetoId)
-                .orElseThrow(() -> new RuntimeException("Usuário não está no projeto."));
+                .orElseThrow(() -> new UsuarioException("Usuário não está no projeto."));
 
         List<Permissao> permissoes = pu.getPermissoes();
 
@@ -268,7 +267,7 @@ public class ProjetoService {
         validarPermissaoGerente(projetoId, gerente.getId());
 
         ProjetoUsuario pu = projetoUsuarioRepository.findByUsuarioIdAndProjetoId(usuarioId, projetoId)
-                .orElseThrow(() -> new RuntimeException("Usuário não está no projeto."));
+                .orElseThrow(() -> new UsuarioException("Usuário não está no projeto."));
 
         Papel papel = projetoUsuarioRepository.findPapelByProjetoIdAndUsuarioId(projetoId, usuarioId);
 
@@ -279,16 +278,16 @@ public class ProjetoService {
     }
 
     private void validarPermissaoGerente(Long projetoId, Long usuarioId) {
-        Papel papelMembro = projetoUsuarioRepository.findPapelByProjetoIdAndUsuarioId(projetoId, usuarioId);
-        boolean ehGerente = papelMembro.getNome().equalsIgnoreCase("GERENTE");
+        ProjetoUsuario membro = projetoUsuarioRepository.findByProjetoIdAndUsuarioId(projetoId, usuarioId)
+                .orElseThrow(() -> new UsuarioException("Usuário não é membro do projeto."));
 
-        if (!ehGerente)
-            throw new RuntimeException("Somente o gerente pode fazer isso.");
+        if (membro.getCargo() != CargoProjeto.GERENTE)
+            throw new PermissaoNegadaException("Somente o gerente pode fazer isso.");
     }
 
     private Usuario buscarUsuarioPorEmail(String email) {
         return usuarioRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("Usuário autenticado não encontrado."));
+                .orElseThrow(() -> new UsuarioException("Usuário autenticado não encontrado."));
     }
 
     private ProjetoResponseDTO converterParaDTO(Projeto projeto) {
@@ -314,19 +313,98 @@ public class ProjetoService {
                 papelEnum);
     }
 
-    private void verificarPermissao(Long projetoId, Long usuarioId, String permissaoLabel) {
+    // cargo gerente e papel gerente sempre sao implementados juntos por enquanto
+    // por enquanto quem chega nesse metodo ja é gerente
+    private void atribuirCargoEPapel(Long projetoId, AtualizarMembroRequestDTO dto, ProjetoUsuario usuarioAlvo) {
+        CargoProjeto cargoAtual = usuarioAlvo.getCargo();
+        CargoProjeto novoCargo = dto.cargo() != null ? dto.cargo() : cargoAtual;
+        boolean cargoMudou = novoCargo != cargoAtual;
+
+        String papelAtual = usuarioAlvo.getPapel() != null ? usuarioAlvo.getPapel().getNome() : null;
+        String papelDesejado;
+        if (dto.papel() != null) {
+            // por enquanto nao existe papel nao atribuivel mas pode mudar
+            if (!dto.papel().isAtribuivel()) {
+                throw new CargoException("Este papel não pode ser atribuído manualmente.");
+            }
+            papelDesejado = dto.papel().name();
+            // garantir que um usuario nao seja promovido a um cargo gerente e continue com papel membro
+            // por enquanto o papel sempre acompanha o cargo
+        } else if (cargoMudou && novoCargo == CargoProjeto.GERENTE) {
+            papelDesejado = PapelProjeto.GERENTE.name();
+        } else if (cargoMudou && cargoAtual == CargoProjeto.GERENTE) {
+            papelDesejado = PapelProjeto.MEMBRO.name();
+        } else {
+            papelDesejado = papelAtual;
+        }
+
+        validarCargoEPapel(novoCargo, papelDesejado);
+
+        if (cargoMudou && cargoAtual == CargoProjeto.GERENTE) {
+            verificarQuantidadeDeGerentes(projetoId);
+        }
+
+        if (cargoMudou) {
+            usuarioAlvo.setCargo(novoCargo);
+        }
+
+        // so troca papel e permissoes se o papel realmente mudou
+        if (papelDesejado != null && !papelDesejado.equalsIgnoreCase(papelAtual)) {
+            Papel novoPapel = papelRepository.findByNome(papelDesejado)
+                    .orElseThrow(() -> new RuntimeException("Papel inexistente."));
+            List<Permissao> novasPermissoes = new ArrayList<>(novoPapel.getPermissoes());
+            usuarioAlvo.setPapel(novoPapel);
+            usuarioAlvo.getPermissoes().clear();
+            usuarioAlvo.getPermissoes().addAll(novasPermissoes);
+        }
+    }
+
+    private void validarCargoEPapel(CargoProjeto cargo, String nomePapel) {
+        boolean cargoGerente = cargo == CargoProjeto.GERENTE;
+        boolean papelGerente = PapelProjeto.GERENTE.name().equalsIgnoreCase(nomePapel);
+        if (cargoGerente != papelGerente) {
+            throw new CargoException("O cargo de Gerente exige o papel de gerente," +
+                                        " e o papel de gerente só existe junto com o cargo de Gerente.");
+        }
+    }
+
+    private void verificarPermissao(Long projetoId, Long usuarioId, PermissoesUsuarioProjeto permissao) {
         ProjetoUsuario membro = projetoUsuarioRepository.findByUsuarioIdAndProjetoId(usuarioId, projetoId)
-                .orElseThrow(() -> new RuntimeException("Usuário não é membro do projeto."));
+                .orElseThrow(() -> new UsuarioException("Usuário não é membro do projeto."));
+
+        // ATUALIZARPERMISSOES e ADICIONARMEMBROS sao exclusivas de gerente por enquanto
+        // decisao de atualizar ou adicionar vem do cargo, nao das permissoes
+        if (permissao == PermissoesUsuarioProjeto.ATUALIZARPERMISSOES
+                || permissao == PermissoesUsuarioProjeto.ADICIONARMEMBROS) {
+            if (membro.getCargo() != CargoProjeto.GERENTE)
+                throw new PermissaoNegadaException("Apenas gerentes podem executar essa ação.");
+            return;
+        }
 
         List<Permissao> permissoes = membro.getPermissoes().isEmpty()
                 ? new ArrayList<>(membro.getPapel().getPermissoes())
                 : membro.getPermissoes();
 
+        //////////////////////////
         boolean possuiPermissao = permissoes.stream()
-                .anyMatch(p -> p.getDescricao().equals(permissaoLabel));
+                .anyMatch(p -> p.getDescricao().equals(permissao.name()));
+        //////////////////////////
 
         if (!possuiPermissao)
-            throw new PermissaoNegadaException();
+            throw new PermissaoNegadaException("Você não possui a permissão " + permissao.name() + " neste projeto.");
     }
 
+    private void verificarGerente(Long projetoId, ProjetoUsuario membro){
+        boolean ehGerente = membro.getCargo() == CargoProjeto.GERENTE;
+        if(!ehGerente){
+            throw new PermissaoNegadaException("Apenas gerentes podem executar essa ação.");
+        }
+    }
+    private void verificarQuantidadeDeGerentes(Long projetoId){
+        // aqui apenas verifica, se nao houver problema o metodo so termina,
+        long numeroGerentesProjeto = projetoUsuarioRepository.countByProjeto_IdAndCargo(projetoId, CargoProjeto.GERENTE);
+        if(numeroGerentesProjeto <= 1){
+            throw new UltimoGerenteException("Um projeto tem que possuir ao menos um gerente");
+        }
+    }
 }

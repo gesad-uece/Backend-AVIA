@@ -8,6 +8,7 @@ import br.com.avia.avia_api.entity.Tarefa;
 import br.com.avia.avia_api.repository.ComentarioRepository;
 import br.com.avia.avia_api.repository.ProjetoUsuarioRepository;
 import br.com.avia.avia_api.repository.TarefaRepository;
+import br.com.avia.avia_api.repository.UsuarioRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
@@ -25,15 +26,18 @@ public class ComentarioService {
     private final TarefaRepository tarefaRepository;
     private final ProjetoUsuarioRepository projetoUsuarioRepository;
     private final NotificacaoService notificacaoService;
+    private final UsuarioRepository usuarioRepository;
 
     public ComentarioService(ComentarioRepository comentarioRepository,
                              TarefaRepository tarefaRepository,
                              ProjetoUsuarioRepository projetoUsuarioRepository,
-                             NotificacaoService notificacaoService) {
+                             NotificacaoService notificacaoService,
+                             UsuarioRepository usuarioRepository) {
         this.comentarioRepository = comentarioRepository;
         this.tarefaRepository = tarefaRepository;
         this.projetoUsuarioRepository = projetoUsuarioRepository;
         this.notificacaoService = notificacaoService;
+        this.usuarioRepository = usuarioRepository;
     }
 
     @Transactional
@@ -50,7 +54,7 @@ public class ComentarioService {
 
         Comentario comentario = new Comentario(tarefaId, dto.descricao(), autor.getId());
         Comentario salvo = comentarioRepository.save(comentario);
-        notificarUsuariosMencionados(projetoId, salvo, obterEmailsMencionados(dto));
+        notificarUsuariosMencionados(salvo, projetoId, obterEmailsMencionados(dto));
 
         return converterParaDTO(salvo);
     }
@@ -114,11 +118,12 @@ public class ComentarioService {
         return emails;
     }
 
-    private void notificarUsuariosMencionados(Long projetoId, Comentario comentario, Set<String> emailsMencionados) {
+    private void notificarUsuariosMencionados(Comentario comentario, Long projetoId, Set<String> emailsMencionados) {
+        // depois verificar se caso o usuario nao pertenca ao projeto, ele nao receba
         emailsMencionados.forEach(email ->
-                projetoUsuarioRepository.findByProjetoIdAndUsuarioEmail(projetoId, email)
-                        .ifPresent(projetoUsuario ->
-                                notificacaoService.notificarUsuarioMencionadoEmComentario(projetoUsuario, comentario))
+                usuarioRepository.findByEmail(email)
+                        .ifPresent(usuario ->
+                                notificacaoService.notificarUsuarioMencionadoEmComentario(usuario, projetoId, comentario))
         );
     }
 

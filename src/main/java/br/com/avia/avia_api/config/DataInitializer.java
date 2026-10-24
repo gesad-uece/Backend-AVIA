@@ -19,7 +19,7 @@ public class DataInitializer implements ApplicationRunner {
     private static final String[] TODAS_PERMISSOES = {
         "CRIARTAREFAS", "EDITARTAREFAS", "EXCLUIRTAREFAS", "MOVERTAREFAS",
         "CRIARCOLUNAS", "EDITARESTRUTURA", "GERENCIARSPRINTS",
-        "ADICIONARMEMBROS", "REMOVERMEMBROS", "VISUALIZARPROJETO"
+        "ADICIONARMEMBROS", "ATUALIZARPERMISSOES", "VISUALIZARPROJETO"
     };
 
     private static final Map<String, String[]> PAPEL_PERMISSOES = Map.of(

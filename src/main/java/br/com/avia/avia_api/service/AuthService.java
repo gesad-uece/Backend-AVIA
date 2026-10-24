@@ -73,6 +73,7 @@ public class AuthService {
 
         authenticationManager.authenticate(authenticationToken);
 
+        // teria que mudar o UserDetail ou criar um UsuarioDetail personalizado que implementa o UserDetail para passar.
         Usuario usuario = usuarioRepository.findByEmail(request.email())
                 .orElseThrow(UsuarioNaoEncontradoException::new);
 
